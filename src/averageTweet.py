@@ -4,6 +4,7 @@ from dateutil.parser import parse
 import datetime
 import optparse
 from pprint import pprint
+import os.path
 from heapq import heappush, heappop, nsmallest, nlargest
 
 DATEFORMAT = "%a %b %d %H:%M:%S %f %Y"
@@ -12,6 +13,7 @@ SECONDS_INTERVAL = 60
 def readFile(inFile):
     """
     Read file and return chunk of file as generator
+    Assuming file is already exist
     
     Args:
         inFile (string): a string that represents file name or a file object from stream
@@ -19,6 +21,8 @@ def readFile(inFile):
     Yields:
         yield a generator that represent line in inFile
     """
+    if not os.path.isfile(inFile): yield None
+        
     try:
         with open(inFile) as f:
             while True:
@@ -134,28 +138,32 @@ def process(raw_data):
     """
     HEAP = []
     GRAPH = {}
-    for data in raw_data:
-        if data.get('limit'): continue # Skip twitter rate limit message
-        
-        tup = sanitize(data) # cleaning valid tweet
-           
-        if tup[1]:
-            if not HEAP: # empty heapq, first valid tweet               
-                heappush(HEAP,tup)
-                addVertices(tup[1], GRAPH)
-            else:
-                in_order_delta, out_of_order_delta = windowCheck(tup, HEAP)
+    if not raw_data:
+        yield None # tolerate with broken tweets/files
+    
+    else:
+        for data in raw_data:
+            if data.get('limit'): continue # Skip twitter rate limit message
 
-                # Maintain 60s window queue:
-                if (in_order_delta>=0) or (out_of_order_delta<SECONDS_INTERVAL and out_of_order_delta>=0):
+            tup = sanitize(data) # cleaning valid tweet
+
+            if tup[1]:
+                if not HEAP: # empty heapq, first valid tweet               
                     heappush(HEAP,tup)
-                    addVertices(tup[1], GRAPH)                    
+                    addVertices(tup[1], GRAPH)
+                else:
+                    in_order_delta, out_of_order_delta = windowCheck(tup, HEAP)
 
-                if in_order_delta > SECONDS_INTERVAL:
-                    heappop(HEAP)
-                    rebuildGraph(HEAP,GRAPH)
+                    # Maintain 60s window queue:
+                    if (in_order_delta>=0) or (out_of_order_delta<SECONDS_INTERVAL and out_of_order_delta>=0):
+                        heappush(HEAP,tup)
+                        addVertices(tup[1], GRAPH)                    
 
-        yield averageDegree(GRAPH)
+                    if in_order_delta > SECONDS_INTERVAL:
+                        heappop(HEAP)
+                        rebuildGraph(HEAP,GRAPH)
+
+            yield averageDegree(GRAPH)
                 
 
 
@@ -182,5 +190,6 @@ if __name__ == "__main__":
     rets = process(raw_data)
     with open(options.outFile,'w+') as f:
         for ret in rets:
-            f.write('{0:.2f}\n'.format(int(ret*100.0)/100.0))
+            if ret:
+                f.write('{0:.2f}\n'.format(int(ret*100.0)/100.0))
     
