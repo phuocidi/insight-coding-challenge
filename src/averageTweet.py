@@ -98,31 +98,9 @@ def averageDegree(graph):
     Args:
         graph (dict): a dictionary that represents a collection of inderected graphs data structure. Key is vertex, and value is a list of adjacent vertices.    
     """
-    
-    lst = map(len,[v for v in graph.values()])
+    assert(type(graph) is dict)
+    lst = [len(v) for v in graph.values()]
     return float(sum(lst))/float(len(lst)) if  len(lst) else 0.0
-
-def windowCheck(tup, heap):
-    """
-    Calculate the delta in time of in order and out of order tweet
-    
-    Args:
-        tup (tuple): a tuple (datetime.datetime, list)
-        heap (list) : a min priority queue. Each element is a tuple, in which first element is a priority and the second element is list of string vertices.
-        
-    Returns:
-        return 2 values: time delta of in order and out of order tweet
-    """
-    assert(heap), "[INVALID]: HEAP is empty"
-    u_bound = nlargest(1,heap)
-    l_bound = nsmallest(1,heap)
-
-    in_order_delta = tup[0] - l_bound[0][0]
-    in_order_delta = in_order_delta.total_seconds()
-
-    out_of_order_delta = u_bound[0][0] - tup[0]
-    out_of_order_delta = out_of_order_delta.total_seconds()
-    return in_order_delta, out_of_order_delta
 
 def process(raw_data):
     """
@@ -136,30 +114,46 @@ def process(raw_data):
     """
     HEAP = []
     GRAPH = {}
-    for data in raw_data:
-        if data.get('limit'): continue # Skip twitter rate limit message
+    if not raw_data:
+        yield None # tolerate with broken tweets/files
+    else:
+        for data in raw_data:
+            if data.get('limit'): continue # Skip twitter rate limit message
 
-        tup = sanitize(data) # cleaning valid tweet
+            tup = sanitize(data) # cleaning valid tweet
 
-        if tup[1]:
-            if not HEAP: # empty heapq, first valid tweet               
-                heappush(HEAP,tup)
-                addVertices(tup[1], GRAPH)
-            else:
-                in_order_delta, out_of_order_delta = windowCheck(tup, HEAP)
-
-                # Maintain 60s window queue:
-                if (in_order_delta>=0) or (out_of_order_delta<SECONDS_INTERVAL and out_of_order_delta>=0):
+            if tup[1]:
+                if not HEAP: # empty heapq, first valid tweet               
                     heappush(HEAP,tup)
-                    addVertices(tup[1], GRAPH)                    
+                    addVertices(tup[1], GRAPH)
+                else:
+                    u_bound = nlargest(1,HEAP)
+                    l_bound = nsmallest(1,HEAP)
 
-                if in_order_delta > SECONDS_INTERVAL:
-                    heappop(HEAP)
-                    rebuildGraph(HEAP,GRAPH)
+                    in_order_delta = tup[0] - l_bound[0][0]
+                    in_order_delta = in_order_delta.total_seconds()
 
-        average =  averageDegree(GRAPH)
-        yield average 
+                    out_of_order_delta = u_bound[0][0] - tup[0]
+                    out_of_order_delta = out_of_order_delta.total_seconds()
 
+                    # Maintain 60s window queue:
+                    if (in_order_delta>=0) or (out_of_order_delta<SECONDS_INTERVAL and out_of_order_delta>=0):
+                        heappush(HEAP,tup)
+                        addVertices(tup[1], GRAPH)                    
+                    
+                    # Remove vertex when tweets is older than 60s comparing to max timestamp
+                    while HEAP:
+                        u_bound = nlargest(1,HEAP)
+                        l_bound = nsmallest(1,HEAP)
+                        delta = u_bound[0][0] - l_bound[0][0]
+                        if  delta.total_seconds() > SECONDS_INTERVAL:
+                            heappop(HEAP)
+                        else:
+                            rebuildGraph(HEAP,GRAPH)
+                            break
+                                                            
+            average =  averageDegree(GRAPH)
+            yield average 
 
 if __name__ == "__main__":
     usage = "%prog -i <input file> -o <output file>"
